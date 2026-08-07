@@ -31,6 +31,7 @@ env:
   APK_PACKAGE: com.personal.youtubescriptcopy.reinstall
   APK_VERSION_CODE: "14"
   APK_VERSION_NAME: "1.3.7"
+  EXPECTED_PUBLIC_CERT_SHA256: 'eb205a6db2ce0b8aa5bd5804069d1a5c62be1a9fb5140a655737384f195f4d8e'
 
 jobs:
   publish:
@@ -38,6 +39,7 @@ jobs:
     timeout-minutes: 30
     env:
       GH_TOKEN: ${{ github.token }}
+      SIGNING_BUNDLE_BASE64: ${{ secrets.YOUTUBE_PUBLIC_SIGNING_BUNDLE_BASE64 }}
     steps:
       - name: Check out source
         uses: actions/checkout@v4
@@ -53,46 +55,49 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Test, build, and self-sign reinstall-only APK
+      - name: Restore persistent public signing identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$SIGNING_BUNDLE_BASE64"
+          rm -rf /tmp/public-signing
+          mkdir -p /tmp/public-signing
+          printf '%s' "$SIGNING_BUNDLE_BASE64" | base64 --decode > /tmp/public-signing/bundle.tar.gz
+          tar -xzf /tmp/public-signing/bundle.tar.gz -C /tmp/public-signing
+          test -s /tmp/public-signing/key.pk8
+          test -s /tmp/public-signing/cert.pem
+          ACTUAL="$(openssl x509 -in /tmp/public-signing/cert.pem -noout -fingerprint -sha256 | cut -d= -f2 | tr -d ':' | tr 'A-F' 'a-f')"
+          test "$ACTUAL" = "$EXPECTED_PUBLIC_CERT_SHA256"
+
+      - name: Test and build unsigned APK
         shell: bash
         run: |
           set -euo pipefail
           ! grep -R --line-number -E 'buildConfigField.*GEMINI|gemini\.apiKey|BuildConfig\.GEMINI_API_KEY' app/src/main app/build.gradle
           grep -R --line-number 'gemini-3.5-flash-lite' app/src/main/java/com/personal/youtubescriptcopy/GeminiInteractionsClient.java
           ! grep -R --line-number 'gemini-3.1-flash-lite' app/src/main app/build.gradle
-
-          KEYSTORE=/tmp/ytsc-reinstall-only.jks
-          STORE_PASSWORD="$(openssl rand -hex 24)"
-          KEY_ALIAS=ytsc-reinstall-only
-          echo "::add-mask::$STORE_PASSWORD"
-          trap 'rm -f "$KEYSTORE"' EXIT
-
-          keytool -genkeypair \
-            -keystore "$KEYSTORE" \
-            -storepass "$STORE_PASSWORD" \
-            -keypass "$STORE_PASSWORD" \
-            -alias "$KEY_ALIAS" \
-            -keyalg RSA \
-            -keysize 2048 \
-            -validity 3650 \
-            -dname 'CN=YouTube Script Copy Reinstall Only,O=Personal Android Build,C=KR'
-
-          export YTSC_KEYSTORE_PATH="$KEYSTORE"
-          export YTSC_KEYSTORE_PASSWORD="$STORE_PASSWORD"
-          export YTSC_KEY_ALIAS="$KEY_ALIAS"
-          export YTSC_KEY_PASSWORD="$STORE_PASSWORD"
-
           ./gradlew --no-daemon clean testDebugUnitTest assembleRelease
-          cp app/build/outputs/apk/release/app-release.apk "$APK_NAME"
 
-      - name: Verify signed APK
+      - name: Sign and verify persistent public APK
+        shell: bash
         run: |
           set -euo pipefail
+          trap 'rm -rf /tmp/public-signing' EXIT
           APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
+          ZIPALIGN="$(find "$ANDROID_HOME/build-tools" -type f -name zipalign | sort -V | tail -n 1)"
           AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -n 1)"
           test -n "$APKSIGNER"
+          test -n "$ZIPALIGN"
           test -n "$AAPT"
+          "$ZIPALIGN" -p -f 4 app/build/outputs/apk/release/app-release-unsigned.apk app-aligned.apk
+          "$APKSIGNER" sign \
+            --key /tmp/public-signing/key.pk8 \
+            --cert /tmp/public-signing/cert.pem \
+            --out "$APK_NAME" \
+            app-aligned.apk
+          rm app-aligned.apk
           "$APKSIGNER" verify --verbose --print-certs "$APK_NAME" | tee apk-signature.txt
+          grep -qi "$EXPECTED_PUBLIC_CERT_SHA256" apk-signature.txt
           grep -q 'Verified using v1 scheme (JAR signing): true' apk-signature.txt
           grep -q 'Verified using v2 scheme (APK Signature Scheme v2): true' apk-signature.txt
           "$AAPT" dump badging "$APK_NAME" | tee apk-badging.txt
@@ -107,12 +112,12 @@ jobs:
           set -euo pipefail
           git archive --format=zip --output="$SOURCE_NAME" "$GITHUB_SHA"
           cat > release-notes.md <<'EOF'
-          v1.3.7 개인용 공개 빌드입니다.
+          v1.3.7 공개 저장소 서명 기준선입니다.
 
+          - 기존 비공개판을 사용 중이면 기존 앱을 삭제한 뒤 이 공개판을 설치해야 합니다.
+          - 이 공개판 이후의 버전은 같은 공개 서명키를 계속 사용하므로 덮어쓰기 업데이트가 가능합니다.
           - 전사 완료 후 스크립트를 선택 앱에 텍스트로 공유합니다.
           - Gemini API 키는 APK에 포함하지 않고 사용자가 앱에서 직접 입력합니다.
-          - 공개 저장소만으로 테스트, APK 빌드, 서명, Release 생성까지 수행합니다.
-          - 이 APK는 실행 시 생성되는 임시 서명키로 서명되므로 이전 설치본 위에 업데이트하지 말고 기존 앱을 삭제한 뒤 설치하세요.
           EOF
 
       - name: Recreate GitHub release
@@ -140,6 +145,7 @@ jobs:
           APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
           AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -n 1)"
           "$APKSIGNER" verify --verbose --print-certs "$APK_NAME" | tee "$GITHUB_WORKSPACE/apk-signature-readback.txt"
+          grep -qi "$EXPECTED_PUBLIC_CERT_SHA256" "$GITHUB_WORKSPACE/apk-signature-readback.txt"
           "$AAPT" dump badging "$APK_NAME" > "$GITHUB_WORKSPACE/apk-badging-readback.txt"
           grep -q "package: name='$APK_PACKAGE'" "$GITHUB_WORKSPACE/apk-badging-readback.txt"
           grep -q "versionCode='$APK_VERSION_CODE'" "$GITHUB_WORKSPACE/apk-badging-readback.txt"
@@ -175,12 +181,15 @@ jobs:
             "run_id": "$GITHUB_RUN_ID",
             "source_sha": "$GITHUB_SHA",
             "release_tag": "$RELEASE_TAG",
-            "mode": "reinstall-only-ephemeral-signing",
+            "mode": "persistent-public-signing",
+            "public_certificate_sha256": "$EXPECTED_PUBLIC_CERT_SHA256",
             "unit_tests": "success",
             "signed_apk": "verified",
             "release_readback": "verified",
+            "private_to_public_reinstall_required": true,
+            "future_public_updates_supported": true,
             "external_private_repo_dependency": false,
-            "repository_secrets_required": false,
+            "repository_secrets_required": true,
             "completed_at_utc": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           }
           EOF
