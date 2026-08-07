@@ -1,0 +1,15 @@
+.agents/
+.codex/
+.gradle/
+.idea/
+**/build/
+local.properties
+*.iml
+*.jks
+*.keystore
+*.p12
+outputs/
+work/
+work-sdk/
+README_FINAL.md
+.gitignore.publish

@@ -1,0 +1,11 @@
+{
+  "repository": "shaterguy/youtube-script-copy-android",
+  "run_id": "31134221610",
+  "event": "schedule",
+  "delete_all": false,
+  "deleted_artifacts": 0,
+  "remaining_artifacts": 1,
+  "retention_days": 7,
+  "retention_setting": "fallback-scheduled-cleanup",
+  "completed_at_utc": "2026-08-07T00:19:15Z"
+}

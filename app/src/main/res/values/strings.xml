@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">유튜브 스크립트 복사</string>
+    <string name="settings_title">유튜브 스크립트 복사 설정</string>
+    <string name="extracting_started">스크립트 추출을 시작했습니다. 진행 상황은 알림창에서 확인할 수 있습니다.</string>
+    <string name="copy_complete">스크립트 복사 완료</string>
+    <string name="notification_progress_channel">스크립트 추출 진행</string>
+    <string name="notification_complete_channel">스크립트 추출 완료</string>
+    <string name="notification_progress_title">유튜브 스크립트 추출 중</string>
+    <string name="notification_complete_title">스크립트 복사 완료</string>
+    <string name="notification_complete_body">전체 스크립트가 복사되었습니다. 앱 공유로 바로 전달할 수 있습니다.</string>
+    <string name="notification_failure_title">스크립트 추출 실패</string>
+    <string name="action_cancel">취소</string>
+    <string name="action_confirm">확인</string>
+    <string name="action_open_app">앱 공유</string>
+    <string name="error_no_youtube_url">유튜브 영상 링크를 찾을 수 없습니다</string>
+    <string name="error_no_transcript">스크립트를 찾을 수 없습니다</string>
+    <string name="error_timeout">스크립트 요청 시간이 초과되었습니다</string>
+    <string name="error_network">네트워크 연결을 확인해 주세요</string>
+    <string name="error_extract">스크립트 추출에 실패했습니다</string>
+    <string name="error_gemini_auth">Gemini API 키를 확인해 주세요</string>
+    <string name="error_gemini_quota">Gemini 무료 사용 한도를 확인해 주세요</string>
+    <string name="error_video_unavailable">공개 영상을 전사할 수 없습니다</string>
+    <string name="error_incomplete_transcript">전체 스크립트를 끝까지 만들지 못했습니다</string>
+    <string name="error_already_processing">이미 스크립트를 추출 중입니다</string>
+    <string name="error_share_selected_app">선택한 앱으로 공유할 수 없습니다. 공유 앱을 다시 선택해 주세요.</string>
+    <string name="error_no_share_apps">텍스트를 공유할 수 있는 앱을 찾지 못했습니다.</string>
+    <string name="error_no_share_payload">공유할 스크립트를 읽지 못했습니다. 영상을 다시 전사한 뒤 앱 공유를 눌러 주세요.</string>
+    <string name="error_share_too_large">스크립트가 너무 길어 앱에 자동 입력할 수 없습니다. 클립보드에서 붙여넣어 주세요.</string>
+    <string name="api_key_required">Gemini API 키를 입력해 주세요</string>
+    <string name="api_key_saved">API 키를 기기에 암호화해 저장했습니다</string>
+    <string name="api_key_deleted">저장된 API 키를 삭제했습니다</string>
+    <string name="notification_permission_required">진행 및 완료 알림을 위해 알림 권한이 필요합니다</string>
+    <string name="app_picker_title">스크립트를 공유할 앱 선택</string>
+    <string name="share_chooser_title">스크립트 공유</string>
+    <string name="share_mode_saved">사용할 때마다 공유 앱 목록을 바로 표시하도록 저장했습니다.</string>
+    <string name="share_app_saved">공유 앱을 저장했습니다.</string>
+</resources>
