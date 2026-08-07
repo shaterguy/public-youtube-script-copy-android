@@ -38,10 +38,6 @@ jobs:
     timeout-minutes: 30
     env:
       GH_TOKEN: ${{ github.token }}
-      YTSC_KEYSTORE_BASE64: ${{ secrets.YTSC_KEYSTORE_BASE64 }}
-      YTSC_KEYSTORE_PASSWORD: ${{ secrets.YTSC_KEYSTORE_PASSWORD }}
-      YTSC_KEY_ALIAS: ${{ secrets.YTSC_KEY_ALIAS }}
-      YTSC_KEY_PASSWORD: ${{ secrets.YTSC_KEY_PASSWORD }}
     steps:
       - name: Check release state
         id: release
@@ -70,32 +66,36 @@ jobs:
         if: steps.release.outputs.exists == 'false'
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Restore signing key from repository secrets
+      - name: Test, build, and self-sign reinstall-only APK
         if: steps.release.outputs.exists == 'false'
-        run: |
-          set -euo pipefail
-          test -n "$YTSC_KEYSTORE_BASE64"
-          test -n "$YTSC_KEYSTORE_PASSWORD"
-          test -n "$YTSC_KEY_ALIAS"
-          test -n "$YTSC_KEY_PASSWORD"
-          echo "::add-mask::$YTSC_KEYSTORE_PASSWORD"
-          echo "::add-mask::$YTSC_KEY_PASSWORD"
-          umask 077
-          printf '%s' "$YTSC_KEYSTORE_BASE64" | base64 --decode > /tmp/ytsc-release.jks
-          keytool -list \
-            -keystore /tmp/ytsc-release.jks \
-            -storepass "$YTSC_KEYSTORE_PASSWORD" \
-            -alias "$YTSC_KEY_ALIAS" >/dev/null
-
-      - name: Test and build signed release
-        if: steps.release.outputs.exists == 'false'
-        env:
-          YTSC_KEYSTORE_PATH: /tmp/ytsc-release.jks
+        shell: bash
         run: |
           set -euo pipefail
           ! grep -R --line-number -E 'buildConfigField.*GEMINI|gemini\.apiKey|BuildConfig\.GEMINI_API_KEY' app/src/main app/build.gradle
           grep -R --line-number 'gemini-3.5-flash-lite' app/src/main/java/com/personal/youtubescriptcopy/GeminiInteractionsClient.java
           ! grep -R --line-number 'gemini-3.1-flash-lite' app/src/main app/build.gradle
+
+          KEYSTORE=/tmp/ytsc-reinstall-only.jks
+          STORE_PASSWORD="$(openssl rand -hex 24)"
+          KEY_ALIAS=ytsc-reinstall-only
+          echo "::add-mask::$STORE_PASSWORD"
+          trap 'rm -f "$KEYSTORE"' EXIT
+
+          keytool -genkeypair \
+            -keystore "$KEYSTORE" \
+            -storepass "$STORE_PASSWORD" \
+            -keypass "$STORE_PASSWORD" \
+            -alias "$KEY_ALIAS" \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 3650 \
+            -dname 'CN=YouTube Script Copy Reinstall Only,O=Personal Android Build,C=KR'
+
+          export YTSC_KEYSTORE_PATH="$KEYSTORE"
+          export YTSC_KEYSTORE_PASSWORD="$STORE_PASSWORD"
+          export YTSC_KEY_ALIAS="$KEY_ALIAS"
+          export YTSC_KEY_PASSWORD="$STORE_PASSWORD"
+
           ./gradlew --no-daemon clean testDebugUnitTest assembleRelease
           cp app/build/outputs/apk/release/app-release.apk "$APK_NAME"
 
@@ -123,15 +123,12 @@ jobs:
           set -euo pipefail
           git archive --format=zip --output="$SOURCE_NAME" "$GITHUB_SHA"
           cat > release-notes.md <<'EOF'
-          v1.3.7은 전사 완료 후 스크립트를 선택 앱에 텍스트로 공유하는 흐름을 도입하고, 삼성 One UI에서 공유창 아래에 전사 앱 설정 화면이 노출되는 문제까지 수정합니다.
+          v1.3.7 개인용 공개 빌드입니다.
 
-          - 완료 알림은 `확인`과 `앱 공유` 두 버튼을 유지합니다.
-          - `앱 공유`는 `ACTION_SEND`와 `text/plain`으로 전체 스크립트를 전달합니다.
-          - 선택한 공유 앱을 기억하거나 사용할 때마다 Android 공유창에서 선택할 수 있습니다.
-          - `사용할 때마다 선택` 모드에서는 추가 버튼 없이 공유창을 즉시 표시합니다.
-          - 공유 전용 투명 Activity와 설정 Activity를 분리해 현재 사용 중인 화면이 공유창 배경으로 유지됩니다.
-          - 클립보드 포커스 제한을 고려해 창 포커스 확보 후 재시도합니다.
-          - 패키지명과 정식 서명 인증서를 유지하고 versionCode를 14로 올려 기존 설치본 위에 업데이트할 수 있습니다.
+          - 전사 완료 후 스크립트를 선택 앱에 텍스트로 공유합니다.
+          - Gemini API 키는 APK에 포함하지 않고 사용자가 앱에서 직접 입력합니다.
+          - 공개 저장소만으로 테스트, APK 빌드, 서명, Release 생성까지 수행합니다.
+          - 이 APK는 실행 시 생성되는 임시 서명키로 서명되므로 이전 설치본 위에 업데이트하지 말고 기존 앱을 삭제한 뒤 설치하세요.
           EOF
 
       - name: Create GitHub release
@@ -170,10 +167,6 @@ jobs:
           gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
             --json tagName,name,isDraft,isPrerelease,targetCommitish,assets,url \
             > "$GITHUB_WORKSPACE/release-readback.json"
-
-      - name: Remove signing credentials
-        if: always()
-        run: rm -f /tmp/ytsc-release.jks
 
       - name: Upload verified release evidence
         if: steps.release.outputs.exists == 'false'
