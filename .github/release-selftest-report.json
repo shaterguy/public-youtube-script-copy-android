@@ -1,0 +1,13 @@
+{
+  "repository": "shaterguy/public-youtube-script-copy-android",
+  "run_id": "31142480906",
+  "source_sha": "19e7e06a4eaaa461ef31a9740cd71088fde8a25b",
+  "release_tag": "v1.3.7",
+  "mode": "reinstall-only-ephemeral-signing",
+  "unit_tests": "success",
+  "signed_apk": "verified",
+  "release_readback": "verified",
+  "external_private_repo_dependency": false,
+  "repository_secrets_required": false,
+  "completed_at_utc": "2026-08-07T02:51:20Z"
+}
