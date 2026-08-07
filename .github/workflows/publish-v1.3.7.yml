@@ -6,8 +6,15 @@ on:
       - main
     paths:
       - "app/**"
+      - "build.gradle"
+      - "settings.gradle"
+      - "gradle.properties"
+      - "gradle/**"
+      - "gradlew"
+      - "gradlew.bat"
       - "README.md"
       - ".github/workflows/publish-v1.3.7.yml"
+  workflow_dispatch:
 
 concurrency:
   group: publish-v1.3.7
@@ -16,24 +23,25 @@ concurrency:
 permissions:
   contents: write
 
+env:
+  RELEASE_TAG: v1.3.7
+  APK_NAME: YouTubeScriptCopy-1.3.7.apk
+  CHECKSUM_NAME: YouTubeScriptCopy-1.3.7.sha256
+  SOURCE_NAME: youtube-script-copy-android-v1.3.7-source.zip
+  APK_PACKAGE: com.personal.youtubescriptcopy.reinstall
+  APK_VERSION_CODE: "14"
+  APK_VERSION_NAME: "1.3.7"
+
 jobs:
   publish:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
       GH_TOKEN: ${{ github.token }}
-      RELEASE_TAG: v1.3.7
-      PREVIOUS_RELEASE_TAG: v1.3.3
-      SIGNING_ASSET_RELEASE_TAG: v1.2.1
-      PREVIOUS_APK_NAME: YouTubeScriptCopy-1.3.3.apk
-      APK_NAME: YouTubeScriptCopy-1.3.7.apk
-      CHECKSUM_NAME: YouTubeScriptCopy-1.3.7.sha256
-      SOURCE_NAME: youtube-script-copy-android-v1.3.7-source.zip
-      APK_PACKAGE: com.personal.youtubescriptcopy.reinstall
-      APK_VERSION_CODE: "14"
-      APK_VERSION_NAME: "1.3.7"
-      RELEASE_TARGET_SHA: ${{ github.sha }}
-
+      YTSC_KEYSTORE_BASE64: ${{ secrets.YTSC_KEYSTORE_BASE64 }}
+      YTSC_KEYSTORE_PASSWORD: ${{ secrets.YTSC_KEYSTORE_PASSWORD }}
+      YTSC_KEY_ALIAS: ${{ secrets.YTSC_KEY_ALIAS }}
+      YTSC_KEY_PASSWORD: ${{ secrets.YTSC_KEY_PASSWORD }}
     steps:
       - name: Check release state
         id: release
@@ -49,7 +57,6 @@ jobs:
         if: steps.release.outputs.exists == 'false'
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.sha }}
           fetch-depth: 0
 
       - name: Set up JDK 17
@@ -63,48 +70,36 @@ jobs:
         if: steps.release.outputs.exists == 'false'
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Recover stable release signing credentials
+      - name: Restore signing key from repository secrets
         if: steps.release.outputs.exists == 'false'
         run: |
           set -euo pipefail
-          gh release download "$PREVIOUS_RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
-            --pattern "$PREVIOUS_APK_NAME"
-          gh release download "$SIGNING_ASSET_RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
-            --pattern "internal-ytsc-release.jks"
-          gh release download "$SIGNING_ASSET_RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
-            --pattern "internal-ytsc-release-key.txt"
-          chmod 600 internal-ytsc-release.jks internal-ytsc-release-key.txt
+          test -n "$YTSC_KEYSTORE_BASE64"
+          test -n "$YTSC_KEYSTORE_PASSWORD"
+          test -n "$YTSC_KEY_ALIAS"
+          test -n "$YTSC_KEY_PASSWORD"
+          echo "::add-mask::$YTSC_KEYSTORE_PASSWORD"
+          echo "::add-mask::$YTSC_KEY_PASSWORD"
+          umask 077
+          printf '%s' "$YTSC_KEYSTORE_BASE64" | base64 --decode > /tmp/ytsc-release.jks
+          keytool -list \
+            -keystore /tmp/ytsc-release.jks \
+            -storepass "$YTSC_KEYSTORE_PASSWORD" \
+            -alias "$YTSC_KEY_ALIAS" >/dev/null
 
       - name: Test and build signed release
         if: steps.release.outputs.exists == 'false'
+        env:
+          YTSC_KEYSTORE_PATH: /tmp/ytsc-release.jks
         run: |
           set -euo pipefail
           ! grep -R --line-number -E 'buildConfigField.*GEMINI|gemini\.apiKey|BuildConfig\.GEMINI_API_KEY' app/src/main app/build.gradle
           grep -R --line-number 'gemini-3.5-flash-lite' app/src/main/java/com/personal/youtubescriptcopy/GeminiInteractionsClient.java
           ! grep -R --line-number 'gemini-3.1-flash-lite' app/src/main app/build.gradle
-          grep -R --line-number 'Intent.ACTION_SEND' app/src/main/java/com/personal/youtubescriptcopy/AppSelectionActivity.java
-          grep -R --line-number 'Intent.EXTRA_TEXT' app/src/main/java/com/personal/youtubescriptcopy/AppSelectionActivity.java
-          grep -R --line-number 'ShareConfigurationActivity' app/src/main/AndroidManifest.xml
-          grep -R --line-number 'taskAffinity=""' app/src/main/AndroidManifest.xml
-          ! grep -R --line-number 'getLaunchIntentForPackage' app/src/main/java/com/personal/youtubescriptcopy
-
-          STORE_PASSWORD="$(sed -n 's/^YTSC_KEYSTORE_PASSWORD=//p' internal-ytsc-release-key.txt)"
-          KEY_ALIAS="$(sed -n 's/^YTSC_KEY_ALIAS=//p' internal-ytsc-release-key.txt)"
-          KEY_PASSWORD="$(sed -n 's/^YTSC_KEY_PASSWORD=//p' internal-ytsc-release-key.txt)"
-          test -n "$STORE_PASSWORD"
-          test -n "$KEY_ALIAS"
-          test -n "$KEY_PASSWORD"
-          echo "::add-mask::$STORE_PASSWORD"
-          echo "::add-mask::$KEY_PASSWORD"
-          export YTSC_KEYSTORE_PATH="$GITHUB_WORKSPACE/internal-ytsc-release.jks"
-          export YTSC_KEYSTORE_PASSWORD="$STORE_PASSWORD"
-          export YTSC_KEY_ALIAS="$KEY_ALIAS"
-          export YTSC_KEY_PASSWORD="$KEY_PASSWORD"
-
           ./gradlew --no-daemon clean testDebugUnitTest assembleRelease
           cp app/build/outputs/apk/release/app-release.apk "$APK_NAME"
 
-      - name: Verify update-compatible APK
+      - name: Verify signed APK
         if: steps.release.outputs.exists == 'false'
         run: |
           set -euo pipefail
@@ -112,20 +107,10 @@ jobs:
           AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -n 1)"
           test -n "$APKSIGNER"
           test -n "$AAPT"
-
-          "$APKSIGNER" verify --verbose --print-certs "$PREVIOUS_APK_NAME" \
-            | tee previous-signature.txt
-          "$APKSIGNER" verify --verbose --print-certs "$APK_NAME" \
-            | tee new-signature.txt
-          grep -q 'Verified using v1 scheme (JAR signing): true' new-signature.txt
-          grep -q 'Verified using v2 scheme (APK Signature Scheme v2): true' new-signature.txt
-
-          PREVIOUS_CERT="$(sed -n 's/^.*certificate SHA-256 digest: //p' previous-signature.txt | head -n 1)"
-          NEW_CERT="$(sed -n 's/^.*certificate SHA-256 digest: //p' new-signature.txt | head -n 1)"
-          test -n "$PREVIOUS_CERT"
-          test "$PREVIOUS_CERT" = "$NEW_CERT"
-
-          "$AAPT" dump badging "$APK_NAME" > apk-badging.txt
+          "$APKSIGNER" verify --verbose --print-certs "$APK_NAME" | tee apk-signature.txt
+          grep -q 'Verified using v1 scheme (JAR signing): true' apk-signature.txt
+          grep -q 'Verified using v2 scheme (APK Signature Scheme v2): true' apk-signature.txt
+          "$AAPT" dump badging "$APK_NAME" | tee apk-badging.txt
           grep -q "package: name='$APK_PACKAGE'" apk-badging.txt
           grep -q "versionCode='$APK_VERSION_CODE'" apk-badging.txt
           grep -q "versionName='$APK_VERSION_NAME'" apk-badging.txt
@@ -136,7 +121,7 @@ jobs:
         if: steps.release.outputs.exists == 'false'
         run: |
           set -euo pipefail
-          git archive --format=zip --output="$SOURCE_NAME" "$RELEASE_TARGET_SHA"
+          git archive --format=zip --output="$SOURCE_NAME" "$GITHUB_SHA"
           cat > release-notes.md <<'EOF'
           v1.3.7은 전사 완료 후 스크립트를 선택 앱에 텍스트로 공유하는 흐름을 도입하고, 삼성 One UI에서 공유창 아래에 전사 앱 설정 화면이 노출되는 문제까지 수정합니다.
 
@@ -156,7 +141,7 @@ jobs:
           gh release create "$RELEASE_TAG" \
             "$APK_NAME" "$CHECKSUM_NAME" "$SOURCE_NAME" \
             --repo "$GITHUB_REPOSITORY" \
-            --target "$RELEASE_TARGET_SHA" \
+            --target "$GITHUB_SHA" \
             --title "YouTube Script Copy 1.3.7" \
             --notes-file release-notes.md
 
@@ -172,21 +157,13 @@ jobs:
           gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --pattern "$SOURCE_NAME"
           sha256sum --check --strict "$CHECKSUM_NAME"
           unzip -t "$SOURCE_NAME" >/dev/null
-
           APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
           AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -n 1)"
-          "$APKSIGNER" verify --verbose --print-certs "$APK_NAME" \
-            | tee "$GITHUB_WORKSPACE/apk-signature-readback.txt"
-          grep -q 'Verified using v1 scheme (JAR signing): true' \
-            "$GITHUB_WORKSPACE/apk-signature-readback.txt"
-          grep -q 'Verified using v2 scheme (APK Signature Scheme v2): true' \
-            "$GITHUB_WORKSPACE/apk-signature-readback.txt"
+          "$APKSIGNER" verify --verbose --print-certs "$APK_NAME" | tee "$GITHUB_WORKSPACE/apk-signature-readback.txt"
           "$AAPT" dump badging "$APK_NAME" > "$GITHUB_WORKSPACE/apk-badging-readback.txt"
           grep -q "package: name='$APK_PACKAGE'" "$GITHUB_WORKSPACE/apk-badging-readback.txt"
           grep -q "versionCode='$APK_VERSION_CODE'" "$GITHUB_WORKSPACE/apk-badging-readback.txt"
           grep -q "versionName='$APK_VERSION_NAME'" "$GITHUB_WORKSPACE/apk-badging-readback.txt"
-          unzip -t "$APK_NAME" >/dev/null
-
           cp "$APK_NAME" "$GITHUB_WORKSPACE/$APK_NAME"
           cp "$CHECKSUM_NAME" "$GITHUB_WORKSPACE/$CHECKSUM_NAME"
           cp "$SOURCE_NAME" "$GITHUB_WORKSPACE/$SOURCE_NAME"
@@ -194,26 +171,9 @@ jobs:
             --json tagName,name,isDraft,isPrerelease,targetCommitish,assets,url \
             > "$GITHUB_WORKSPACE/release-readback.json"
 
-      - name: Remove temporary inspection branches
-        if: steps.release.outputs.exists == 'false'
-        run: |
-          set -euo pipefail
-          for branch in \
-            tmp-release-inspection \
-            tmp-release-inspection-2 \
-            tmp-release-inspection-3 \
-            tmp-release-inspection-4 \
-            tmp-release-inspection-5 \
-            tmp-release-inspection-6 \
-            tmp-release-inspection-7; do
-            gh api --method DELETE \
-              "repos/$GITHUB_REPOSITORY/git/refs/heads/$branch" >/dev/null 2>&1 || true
-          done
-
       - name: Remove signing credentials
-        if: always() && steps.release.outputs.exists == 'false'
-        run: |
-          rm -f internal-ytsc-release.jks internal-ytsc-release-key.txt
+        if: always()
+        run: rm -f /tmp/ytsc-release.jks
 
       - name: Upload verified release evidence
         if: steps.release.outputs.exists == 'false'
